@@ -1,3 +1,4 @@
+
 import pandas as pd
 from numpy import math
 import datetime
@@ -60,7 +61,7 @@ def getDate(day, month, year ):
     return datetime.datetime.strptime(str(day) + ' ' + str(month) + ' ' + str(year), "%d %m %Y")   
    
 
-#gets the date from birth_date and derived_date
+#gets the birth date from day, month, year and derived_date
 def getCompleteDateForRow(v):
     day = v['birth_date_day']
     month = v['birth_date_month']
@@ -69,9 +70,9 @@ def getCompleteDateForRow(v):
     if pd.isnull(day) or pd.isnull(month) or pd.isnull(year):
         return None
         
-    derived_day = v['derived_date_of_birth_day']
-    derived_month = v['derived_date_of_birth_month']
-    derived_year = v['derived_date_of_birth_year']
+    derived_day = v['derived_birth_date_day']
+    derived_month = v['derived_birth_date_month']
+    derived_year = v['derived_birth_date_year']
                        
     calculated_year = getYear(year, derived_year)
     if (calculated_year == -1):
@@ -80,7 +81,7 @@ def getCompleteDateForRow(v):
     calculated_day = getDay(day, derived_day, calculated_month, calculated_year)
     date = getDate(calculated_day, calculated_month, calculated_year)
     return date
-            
+
 
 
 #if birth date is less than 100 years, it's closed_until
@@ -100,12 +101,11 @@ def CreateClosure(v):
     else:
         return('unknown status')
 
-
+#I assume that if the ordinal is not populated, 
+#the row corresponds to a folder. If I have an ordinal, it's a file. 
 def getFolderOrFile(v):
-    file_path = v['file_path']
-    if pd.isnull(file_path):
-        return 'error'
-    if (file_path.endswith('/')):
+    ordinal = v['ordinal']
+    if pd.isnull(ordinal):
         return 'folder'
     else:
         return 'file'
@@ -114,13 +114,14 @@ def getFolderOrFile(v):
 
 #if it's a folder, I must copy the closure_status from the files - if at least one file is open, the folder is also open
 def getClosureForFolder(v):
-    file_path = v['file_path']
     folder = v['folder']
     if (folder=='folder'):
-        s1 = df.loc[df['file_path'].str.startswith(file_path) & df['closure_type'].str.startswith('open_on_transfer')]
+        piece = v['piece']
+        item = v['item']
+        s1 = df.loc[df['piece'].eq(piece) & (df['item'].eq(item) if not math.isnan(item) else True) & (df['closure_type'].str.startswith('open_on_transfer'))]
         if (s1.empty):
             #check if I have closed_until or unknown_status
-            s2 = df.loc[df['file_path'].str.startswith(file_path) & df['closure_type'].str.startswith('closed_until')]
+            s2 = df.loc[df['piece'].eq(piece) & (df['item'].eq(item) if not math.isnan(item) else True) & (df['closure_type'].str.startswith('closed_until'))]
             if (s2.empty):
                 return 'unknown_status'
             else:
@@ -137,17 +138,18 @@ def getClosureForFolder(v):
 def populateClosureStartDate(v):
     from datetime import datetime
     dateOfBirth = v['date_of_birth']
-    file_path = v['file_path']
+    piece = v['piece']
+    item = v['item']
     closure_type = v['closure_type']
     if (closure_type=='closed_until'):
         if (pd.isnull(dateOfBirth)):
             #if I don't have a date of birth, I must copy the latest date of birth from the files
-            latestDate = df.loc[df['file_path'].str.startswith(file_path)]['date_of_birth'].sort_values(ascending=False).iloc[0]
-            return (datetime.strftime(latestDate, '%Y-%m-%d %H:%M:%S'))
+            df1 = df.loc[df['piece'].eq(piece) & (df['item'].eq(item) if not math.isnan(item) else True)]['date_of_birth'].copy()
+            df1.sort(ascending=False)
+            latestDate = df1.iloc[0]
+            return (datetime.strftime(latestDate, '%Y-%m-%dT%H:%M:%S'))
         else:   
-            return str(datetime.strftime(dateOfBirth, '%Y-%m-%d %H:%M:%S'))
-
-
+            return str(datetime.strftime(dateOfBirth, '%Y-%m-%dT%H:%M:%S'))
 
 
 def populateClosurePeriod(v):
@@ -181,19 +183,23 @@ def process_args() :
 
 
 transcription_file, tech_acq_file, output_file = process_args();
-#input data, maybe give it a param?
-#df1 = pd.read_csv('/home/ldamian/gitlab/fixup/transcription_metadata_v1_ADM362Y14B001.csv')
-#df2 = pd.read_csv('/home/ldamian/gitlab/fixup/tech_acq_metadata_v1_ADM362Y14B001.csv')
+#df1 = pd.read_csv('/Users/lauradamian/github/fixup/transcription_metadata_v2_ADM362Y14S001.csv')
+#df2 = pd.read_csv('/Users/lauradamian/github/fixup/tech_acq_metadata_v2_ADM362Y14S001.csv')
 
 df1 = pd.read_csv(transcription_file)
 df2 = pd.read_csv(tech_acq_file)
 
-df = pd.merge(df1, df2, on='file_path', how='outer')
+df = pd.merge(df1, df2, on=['piece', 'item', 'ordinal'], how='outer')
+
+#gets the birth date from day, month, year and derived_date
 df['date_of_birth'] = df.apply(getCompleteDateForRow,axis=1)
-df['closure_type']=df.apply(CreateClosure, axis=1)        
-df['folder'] = df.apply(getFolderOrFile,axis=1)    
+#creates closure_type (open_on_transfer, closed_until, unknown) based on birth day
+df['closure_type']=df.apply(CreateClosure, axis=1) 
+#populates folder column(folder, file)
+df['folder'] = df.apply(getFolderOrFile,axis=1)
+#calculates closure for folders based on the files
 df['closure_type'] = df.apply(getClosureForFolder,axis=1)
-df['closure_start_date'] = df.apply(populateClosureStartDate,axis=1)        
+df['closure_start_date'] = df.apply(populateClosureStartDate,axis=1)  
 df['closure_period'] = df.apply(populateClosurePeriod,axis=1)    
 df['foi_exemption_code'] = df.apply(populateFoiExemptionCode,axis=1)    
 df['foi_exemption_asserted'] = df.apply(populateFoiExemptionAsserted,axis=1)  
@@ -202,17 +208,13 @@ df['description_alternate']=''
 df['opening_date']=df.apply(populateOpeningDate,axis=1)
 
 newcols = {
-    'file_path': 'identifier', 
+    'file_path_y': 'identifier', 
 }
 df.rename(columns=newcols, inplace=True)
     
-df3 = df[['identifier','closure_start_date', 'folder', 'closure_period', 'foi_exemption_code', 'foi_exemption_asserted','description_public','description_alternate','closure_type','opening_date']]
-df3.sort_values(by='identifier', inplace=True)
+df3 = df[['identifier','closure_start_date', 'folder', 'closure_period', 'foi_exemption_code', 'foi_exemption_asserted','description_public','description_alternate','closure_type','opening_date']].copy()
+df3.sort(columns='identifier', inplace=True)
     
 #df3.to_csv('/tmp/closure_v8_ADM362Y14S001.csv', sep=',', encoding='utf-8', index=False)
 df3.to_csv(output_file, sep=',', encoding='utf-8', index=False)	
-
-
-
-
 
