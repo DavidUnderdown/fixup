@@ -84,7 +84,7 @@ def getCompleteDateForRow(v):
 
 
 
-#if birth date is less than 100 years, it's closed_until
+#if birth date is less than 100 years and one day, it's closed_until
 #if i cannot derive birth date, it's unknown_status (must be completed manually by archivists)
 def CreateClosure(v):
     birthday = v['date_of_birth']
@@ -93,7 +93,8 @@ def CreateClosure(v):
         return 'unknown(empty)'
     
     if isinstance(birthday, datetime.date):
-        new_date = birthday + relativedelta(years=100)
+        new_date = birthday + relativedelta(years=100,days=1)
+	#May need to pull original transfer date rather than now - asssume from opening_date of piece?
         if (new_date < datetime.datetime.now()):
             return('open_on_transfer')
         else:
@@ -165,7 +166,7 @@ def populateFoiExemptionCode(v):
 def populateFoiExemptionAsserted(v):
     closure_type = v['closure_type']
     if (closure_type=='closed_until'):
-        return '2013'
+        return '2015'
 
 def populateOpeningDate(v):
     return v['record_opening_date']
